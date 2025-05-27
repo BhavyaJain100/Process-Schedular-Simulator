@@ -1,8 +1,12 @@
 package GUI;
 
 import javax.swing.*;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.awt.event.ItemEvent;
+import java.awt.event.ItemListener;
+import java.io.File;
 import java.util.*;
 import java.util.List;
 import Models.*;
@@ -19,8 +23,8 @@ public class SchedulerUI extends JFrame {
     private int processCounter = 1;
     
     // Visualization components
-    private JTable processTable, metricsTable;
-    private DefaultTableModel processTableModel, metricsTableModel;
+    private JTable processTable, metricsTable, comparisonTable;
+    private DefaultTableModel processTableModel, metricsTableModel, comparisonTableModel;
     private GanttChartPanel ganttPanel;
     private JLabel metricsLabel;
     private JTextField quantumField;
@@ -42,7 +46,9 @@ public class SchedulerUI extends JFrame {
         btnAddProcess = createStyledButton("Add Manual Process");
         btnGenerate = createStyledButton("Auto Generate");
         btnClear = createStyledButton("Clear All");
-        
+        JButton btnExportPDF = createStyledButton("Generate PDF Report");
+        btnExportPDF.addActionListener(e -> generatePDFReport());
+
         btnAddProcess.addActionListener(e -> addManualProcess());
         btnGenerate.addActionListener(e -> autoGenerateProcesses());
         btnClear.addActionListener(e -> clearAllProcesses());
@@ -50,6 +56,7 @@ public class SchedulerUI extends JFrame {
         inputPanel.add(btnAddProcess);
         inputPanel.add(btnGenerate);
         inputPanel.add(btnClear);
+        inputPanel.add(btnExportPDF);
 
         // Process Table
         String[] processColumns = {"PID", "Arrival Time", "Burst Time", "Priority"};
@@ -65,12 +72,40 @@ public class SchedulerUI extends JFrame {
         JPanel configPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
 
         // Algorithm Selection
-        algorithmSelector = new JComboBox<>(new String[]{"FCFS", "SJF", "Priority", "Round Robin"});
+        algorithmSelector = new JComboBox<>(new String[]{"Select Algorithm","FCFS", "SJF", "Priority", "Round Robin"});
+        algorithmSelector.setEnabled(true);
+        algorithmSelector.addActionListener(e -> toggleQuantumField());
+        
         manualRadio = new JRadioButton("Manual Select");
         autoRadio = new JRadioButton("Auto Select");
         bestRadio = new JRadioButton("Best Fit");
         worstRadio = new JRadioButton("Worst Fit");
         quantumField = new JTextField("4", 5);
+        quantumField.setEnabled(false);
+        
+        algorithmSelector.addItemListener(e -> {
+            if (manualRadio.isSelected()) {
+                String selectedAlgo = (String) algorithmSelector.getSelectedItem();
+                quantumField.setEnabled("Round Robin".equals(selectedAlgo));
+            }
+        });
+        
+        
+     // Manual/Auto selection mode listener
+        ItemListener selectionModeListener = e -> {
+            if (e.getStateChange() == ItemEvent.SELECTED) {
+                boolean isManual = manualRadio.isSelected();
+                algorithmSelector.setEnabled(isManual);
+
+                String selectedAlgo = (String) algorithmSelector.getSelectedItem();
+                quantumField.setEnabled(isManual && "Round Robin".equals(selectedAlgo));
+            }
+        };
+        
+
+        manualRadio.addItemListener(selectionModeListener);
+        autoRadio.addItemListener(selectionModeListener);
+        
         
         modeGroup = new ButtonGroup();
         modeGroup.add(manualRadio);
@@ -96,9 +131,58 @@ public class SchedulerUI extends JFrame {
         configPanel.add(new JLabel("Auto Selection Criteria:"));
         configPanel.add(bestRadio);
         configPanel.add(worstRadio);
+        
+              
+        JButton importButton = new JButton("Import Process Table");
+        importButton.addActionListener(e -> {
+            JFileChooser fileChooser = new JFileChooser();
+            fileChooser.setDialogTitle("Import Process Table");
+            fileChooser.setFileFilter(new FileNameExtensionFilter(
+                    "Supported Files (Word, PDF, CSV, TXT)", "docx", "pdf", "csv", "txt"));
 
+            int result = fileChooser.showOpenDialog(null);
+            if (result == JFileChooser.APPROVE_OPTION) {
+                File selectedFile = fileChooser.getSelectedFile();
+                try {
+                    List<Models.Process> importedProcesses = FileHandler.importProcesses(selectedFile);
+
+                    if (importedProcesses.isEmpty()) {
+                        JOptionPane.showMessageDialog(null, "No valid processes found in file!", "Info", JOptionPane.INFORMATION_MESSAGE);
+                        return;
+                    }
+
+                    // ✅ Update internal process list
+                    processes.clear();
+                    processes.addAll(importedProcesses);
+
+                    // ✅ Update UI Table
+                    DefaultTableModel model = (DefaultTableModel) processTable.getModel();
+                    model.setRowCount(0); // Clear table rows
+
+                    for (Models.Process p : importedProcesses) {
+                        model.addRow(new Object[]{
+                            p.getId(),
+                            p.getArrivalTime(),
+                            p.getBurstTime(),
+                            p.getPriority()
+                        });
+                    }
+
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(null,
+                            "Failed to import: " + ex.getMessage(),
+                            "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        });
+
+
+        
+        algorithmPanel.add(importButton); // Add to control panel or menu
+        
         controlPanel.add(algorithmPanel);
         controlPanel.add(configPanel);
+
 
         // Visualization Panel
         visualizationPanel = new JPanel(new BorderLayout());
@@ -110,14 +194,33 @@ public class SchedulerUI extends JFrame {
         resultTabs.addTab("Gantt Chart", new JScrollPane(ganttPanel));
         resultTabs.addTab("Metrics", createMetricsPanel());
         resultTabs.addTab("Process Table", tableScroll);
+        resultTabs.addTab("Algorithm Comparison", createComparisonPanel());
 
         visualizationPanel.add(resultTabs, BorderLayout.CENTER);
         visualizationPanel.add(metricsLabel, BorderLayout.SOUTH);
 
+        // Initialize quantum field state
+        toggleQuantumField();
+        
         // Main Layout
         add(inputPanel, BorderLayout.NORTH);
         add(controlPanel, BorderLayout.CENTER);
         add(visualizationPanel, BorderLayout.SOUTH);
+    }
+
+    private void toggleQuantumField() {
+        boolean isRR = "Round Robin".equals(algorithmSelector.getSelectedItem());
+        quantumField.setEnabled(isRR);
+    }
+
+    private JPanel createComparisonPanel() {
+        JPanel panel = new JPanel(new BorderLayout());
+        String[] columns = {"Algorithm", "Avg Waiting Time", "Avg Turnaround Time"};
+        comparisonTableModel = new DefaultTableModel(columns, 0);
+        comparisonTable = new JTable(comparisonTableModel);
+        JScrollPane scroll = new JScrollPane(comparisonTable);
+        panel.add(scroll, BorderLayout.CENTER);
+        return panel;
     }
 
     private JButton createStyledButton(String text) {
@@ -138,7 +241,6 @@ public class SchedulerUI extends JFrame {
         return panel;
     }
 
-    // Process management methods
     private void addManualProcess() {
         try {
             String input = JOptionPane.showInputDialog(this, "How many processes do you want to add manually?");
@@ -188,7 +290,6 @@ public class SchedulerUI extends JFrame {
         }
     }
 
-
     private void autoGenerateProcesses() {
         try {
             int count = Integer.parseInt(JOptionPane.showInputDialog(this, 
@@ -219,6 +320,7 @@ public class SchedulerUI extends JFrame {
         processCounter = 1;
         processTableModel.setRowCount(0);
         metricsTableModel.setRowCount(0);
+        comparisonTableModel.setRowCount(0);
         ganttPanel.clearChart();
         metricsLabel.setText(" ");
     }
@@ -230,9 +332,13 @@ public class SchedulerUI extends JFrame {
         }
 
         try {
+            int quantum = Integer.parseInt(quantumField.getText());
+            if (quantum <= 0) {
+                throw new NumberFormatException("Quantum must be positive");
+            }
+
             SchedulingResult result;
             String selectedAlgo = "";
-            int quantum = Integer.parseInt(quantumField.getText());
 
             if(manualRadio.isSelected()) {
                 selectedAlgo = (String) algorithmSelector.getSelectedItem();
@@ -262,6 +368,8 @@ public class SchedulerUI extends JFrame {
             }
 
             updateVisualization(result, selectedAlgo);
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Invalid quantum value. Please enter a positive integer.");
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Error in scheduling: " + ex.getMessage());
         }
@@ -294,6 +402,61 @@ public class SchedulerUI extends JFrame {
         
         metricsLabel.setText(metrics);
         resultTabs.setSelectedIndex(0); // Switch to Gantt Chart tab
+    }
+
+    private void generatePDFReport() {
+        if (processes.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "No processes available to generate report.");
+            return;
+        }
+
+        try {
+            int quantum = Integer.parseInt(quantumField.getText());
+            if (quantum <= 0) {
+                throw new NumberFormatException("Quantum must be positive");
+            }
+
+            Map<String, SchedulingResult> allResults = new LinkedHashMap<>();
+            allResults.put("FCFS", FCFS.schedule(processes));
+            allResults.put("SJF", SJF.schedule(processes));
+            allResults.put("Priority", PriorityScheduling.schedule(processes));
+            allResults.put("Round Robin", RoundRobin.schedule(processes, quantum));
+
+            // Update comparison table
+            comparisonTableModel.setRowCount(0);
+            for (Map.Entry<String, SchedulingResult> entry : allResults.entrySet()) {
+                comparisonTableModel.addRow(new Object[]{
+                    entry.getKey(),
+                    String.format("%.2f", entry.getValue().getAverageWaitingTime()),
+                    String.format("%.2f", entry.getValue().getAverageTurnaroundTime())
+                });
+            }
+
+            JFileChooser fileChooser = new JFileChooser();
+            fileChooser.setDialogTitle("Save PDF Report");
+            fileChooser.setFileFilter(new FileNameExtensionFilter("PDF Files", "pdf"));
+
+            int result = fileChooser.showSaveDialog(this);
+            if (result == JFileChooser.APPROVE_OPTION) {
+                File selectedFile = fileChooser.getSelectedFile();
+                String path = selectedFile.getAbsolutePath();
+                if (!path.endsWith(".pdf")) {
+                    path += ".pdf";
+                }
+
+                ReportGenerator.generateComparisonReport(allResults, path);
+                int openOption = JOptionPane.showConfirmDialog(this,
+                    "Report generated successfully.\nOpen it now?", "Success", JOptionPane.YES_NO_OPTION);
+                if (openOption == JOptionPane.YES_OPTION) {
+                    Desktop.getDesktop().open(new File(path));
+                }
+            }
+
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Invalid quantum value. Please enter a positive integer.");
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Error generating report: " + ex.getMessage());
+        }
     }
 
     // Custom Gantt Chart Panel with dynamic scaling
