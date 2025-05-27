@@ -1,6 +1,8 @@
 package GUI;
 
 import javax.swing.*;
+import java.util.HashMap;
+import java.util.Map;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
@@ -403,6 +405,15 @@ public class SchedulerUI extends JFrame {
         metricsLabel.setText(metrics);
         resultTabs.setSelectedIndex(0); // Switch to Gantt Chart tab
     }
+    
+    private List<Models.Process> deepCopyProcesses(List<Models.Process> original) {
+        List<Models.Process> copy = new ArrayList<>();
+        for (Models.Process p : original) {
+            copy.add(new Models.Process(p.getId(), p.getArrivalTime(), p.getBurstTime(), p.getPriority()));
+        }
+        return copy;
+    }
+
 
     private void generatePDFReport() {
         if (processes.isEmpty()) {
@@ -416,13 +427,27 @@ public class SchedulerUI extends JFrame {
                 throw new NumberFormatException("Quantum must be positive");
             }
 
+            // Create deep copies of the original process list for each algorithm
             Map<String, SchedulingResult> allResults = new LinkedHashMap<>();
-            allResults.put("FCFS", FCFS.schedule(processes));
-            allResults.put("SJF", SJF.schedule(processes));
-            allResults.put("Priority", PriorityScheduling.schedule(processes));
-            allResults.put("Round Robin", RoundRobin.schedule(processes, quantum));
+            Map<String, List<Models.Process>> allProcesses = new LinkedHashMap<>();
 
-            // Update comparison table
+            List<Models.Process> fcfsProcesses = deepCopyProcesses(processes);
+            allResults.put("FCFS", FCFS.schedule(fcfsProcesses));
+            allProcesses.put("FCFS", fcfsProcesses);
+
+            List<Models.Process> sjfProcesses = deepCopyProcesses(processes);
+            allResults.put("SJF", SJF.schedule(sjfProcesses));
+            allProcesses.put("SJF", sjfProcesses);
+
+            List<Models.Process> priorityProcesses = deepCopyProcesses(processes);
+            allResults.put("Priority", PriorityScheduling.schedule(priorityProcesses));
+            allProcesses.put("Priority", priorityProcesses);
+
+            List<Models.Process> rrProcesses = deepCopyProcesses(processes);
+            allResults.put("Round Robin", RoundRobin.schedule(rrProcesses, quantum));
+            allProcesses.put("Round Robin", rrProcesses);
+
+            // Update the comparison table in the UI
             comparisonTableModel.setRowCount(0);
             for (Map.Entry<String, SchedulingResult> entry : allResults.entrySet()) {
                 comparisonTableModel.addRow(new Object[]{
@@ -444,7 +469,8 @@ public class SchedulerUI extends JFrame {
                     path += ".pdf";
                 }
 
-                ReportGenerator.generateComparisonReport(allResults, path);
+                ReportGenerator.generateCompleteReport(allResults, allProcesses, path);
+
                 int openOption = JOptionPane.showConfirmDialog(this,
                     "Report generated successfully.\nOpen it now?", "Success", JOptionPane.YES_NO_OPTION);
                 if (openOption == JOptionPane.YES_OPTION) {
@@ -456,8 +482,10 @@ public class SchedulerUI extends JFrame {
             JOptionPane.showMessageDialog(this, "Invalid quantum value. Please enter a positive integer.");
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Error generating report: " + ex.getMessage());
+            ex.printStackTrace();
         }
     }
+
 
     // Custom Gantt Chart Panel with dynamic scaling
     class GanttChartPanel extends JPanel {
